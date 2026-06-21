@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>无限画布 Infinite Canvas</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #canvas {
+    position: absolute; inset: 0;
+    background-color: #fafafa;
+    background-image:
+      radial-gradient(circle, #d0d0d0 1px, transparent 1px);
+    background-size: 24px 24px;
+    cursor: grab;
+    touch-action: none;
+  }
+  #canvas.dragging { cursor: grabbing; }
+  #world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  .note {
+    position: absolute;
+    min-width: 160px; min-height: 90px;
+    padding: 12px 14px;
+    background: #fff7c0;
+    border: 1px solid #e6d77a;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.12);
+    font-size: 15px; line-height: 1.5; color: #333;
+    cursor: text;
+    white-space: pre-wrap; word-break: break-word;
+    outline: none;
+  }
+  .note:focus { box-shadow: 0 0 0 2px #3b82f6, 0 4px 14px rgba(0,0,0,.18); }
+  #toolbar {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; align-items: center;
+    background: rgba(255,255,255,.92); backdrop-filter: blur(8px);
+    padding: 8px 12px; border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.1); z-index: 10;
+    font-size: 14px;
+  }
+  #toolbar button {
+    border: none; background: #3b82f6; color: #fff;
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  #toolbar button.ghost { background: #eee; color: #444; }
+  #toolbar button:active { transform: scale(.96); }
+  #hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: #999; font-size: 12px; z-index: 10; pointer-events: none;
+    background: rgba(255,255,255,.7); padding: 4px 10px; border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="add">+ 添加便签</button>
+  <button id="reset" class="ghost">回到中心</button>
+  <span id="zoom" style="color:#666;min-width:48px;text-align:center">100%</span>
+</div>
+<div id="canvas">
+  <div id="world"></div>
+</div>
+<div id="hint">空白处拖动平移 · 滚轮/双指缩放 · 双击空白新建便签</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const world  = document.getElementById('world');
+const zoomEl = document.getElementById('zoom');
+
+let scale = 1, offsetX = 0, offsetY = 0;
+const MIN = 0.2, MAX = 4;
+
+function apply() {
+  world.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+  canvas.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
+  canvas.style.backgroundSize = `${24*scale}px ${24*scale}px`;
+  zoomEl.textContent = Math.round(scale*100) + '%';
+}
+
+// 平移：拖动空白区域
+let panning = false, startX = 0, startY = 0, startOX = 0, startOY = 0;
+canvas.addEventListener('pointerdown', e => {
+  if (e.target.classList.contains('note')) return; // 在便签上不平移
+  panning = true; canvas.classList.add('dragging');
+  startX = e.clientX; startY = e.clientY; startOX = offsetX; startOY = offsetY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!panning) return;
+  offsetX = startOX + (e.clientX - startX);
+  offsetY = startOY + (e.clientY - startY);
+  apply();
+});
+canvas.addEventListener('pointerup', e => { panning = false; canvas.classList.remove('dragging'); });
+
+// 缩放：滚轮，以光标为中心
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const wx = (mx - offsetX) / scale, wy = (my - offsetY) / scale;
+  const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+  scale = Math.min(MAX, Math.max(MIN, scale * factor));
+  offsetX = mx - wx * scale;
+  offsetY = my - wy * scale;
+  apply();
+}, { passive: false });
+
+// 新建便签
+function addNote(worldX, worldY, text='新便签') {
+  const n = document.createElement('div');
+  n.className = 'note';
+  n.contentEditable = 'true';
+  n.textContent = text;
+  n.style.left = worldX + 'px';
+  n.style.top  = worldY + 'px';
+  world.appendChild(n);
+  // 便签内拖动移动
+  let dragging = false, sx, sy, sl, st;
+  n.addEventListener('pointerdown', e => {
+    if (document.activeElement === n) return; // 编辑中不拖动
+    e.stopPropagation();
+    dragging = true; sx = e.clientX; sy = e.clientY;
+    sl = parseFloat(n.style.left); st = parseFloat(n.style.top);
+    n.setPointerCapture(e.pointerId);
+  });
+  n.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    n.style.left = sl + (e.clientX - sx)/scale + 'px';
+    n.style.top  = st + (e.clientY - sy)/scale + 'px';
+  });
+  n.addEventListener('pointerup', e => { dragging = false; });
+  n.addEventListener('dblclick', e => { e.stopPropagation(); n.focus(); });
+  return n;
+}
+
+function screenToWorld(sx, sy) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: (sx - rect.left - offsetX)/scale, y: (sy - rect.top - offsetY)/scale };
+}
+
+document.getElementById('add').addEventListener('click', () => {
+  const c = screenToWorld(window.innerWidth/2, window.innerHeight/2);
+  const n = addNote(c.x - 80, c.y - 45);
+  n.focus();
+});
+canvas.addEventListener('dblclick', e => {
+  if (e.target.classList.contains('note')) return;
+  const w = screenToWorld(e.clientX, e.clientY);
+  const n = addNote(w.x - 80, w.y - 45);
+  n.focus();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  scale = 1; offsetX = window.innerWidth/2; offsetY = window.innerHeight/2; apply();
+});
+
+// 初始：把原点放到屏幕中心，并放一个欢迎便签
+offsetX = window.innerWidth/2; offsetY = window.innerHeight/2;
+addNote(-90, -120, '欢迎使用无限画布 🎨\n\n双击空白处新建便签\n滚轮缩放，拖动平移');
+apply();
+</script>
+</body>
+</html>
